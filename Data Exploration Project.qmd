@@ -1,0 +1,118 @@
+---
+title: "Data Exploration Project: The Causal Effect of Temperature on Walmart Sales"
+author: 'Harlan Hoog'
+format: docx
+execute: 
+  echo: false
+---
+
+
+## Introduction
+
+Average temperatures have been rising over time. Wal-Mart is curious whether this might have a harmful impact on sales. The question I will answer in this analysis is: in these Wal-Mart stores, do higher temperatures causally affect sales?
+
+## Data Preparation
+
+The first step in answering our research question is to perform the data preparation necessary to perform analysis.
+
+```{r}
+library(vtable)
+library(tidyverse)
+library(fixest)
+library(rio)
+library(lubridate)
+library(dagitty)
+library(ggdag)
+```
+
+
+
+```{r}
+## read in CSV
+walmart <- import('Walmart_Sales.csv')
+## View variables
+vtable(walmart)
+
+summary(walmart)
+```
+
+```{r}
+## Change date variable to numeric
+walmart$date_fixed <- dmy(walmart$Date)
+walmart$time_trend <- as.numeric(walmart$date_fixed)
+
+## Extract Month
+walmart$month <- factor(month(walmart$date_fixed))
+## Extract Year
+walmart$year <- factor(year(walmart$date_fixed))
+## Store changed to categorical variables
+walmart$cat_store <- factor(walmart$Store)
+## Adjust for inflation
+walmart$real_sales <- (walmart$Weekly_Sales/walmart$CPI)*100
+```
+
+  I created and transformed a few variables so that they worked better for the analysis. For the date variable, I created both a year and a month variable. The year variable is meant to control for broader time trends that could have impacted sales on a year to year basis. In the years we have data for (2011 & 2012) this could like the recovery from the 2008 recession. The month variable controls for seasonality, do sales vary based on the time of year? This variable is also meant to capture changes in sales due to holidays, a variable I excluded because using month closed the path on the causal diagram I created.
+  
+  I also created a new variable, real_sales. Because temperatures are generally increasing year over year, and because inflation makes sales look like they're rising year over year, I didn't want the temperature to take credit for inflation. Using the consumer price index isolates the true purchasing volume.
+  
+
+## Exploratory Data Analysis
+
+```{r}
+ggplot(walmart, aes(x = real_sales)) + 
+  geom_histogram(bins = 50) + 
+  theme_minimal() +
+  labs(title = "Histogram of Real Sales")
+
+```
+  Pictured above is a histogram for the real sales variable (sales adjust for inflation). Looking at the distribution, the sales data is heavily right skewed so I chose to take the log of the sales in our model to lessen the impact of those few observations that cause the skew. This will also allow us to interpret our results as percentage changes which is more relevant for this discussion.
+  
+ 
+
+## Model Design
+  
+```{r}
+## model3, Fixed effects model with log(real_sales) and polynomial temperature
+model3 <- feols(log(real_sales) ~ Temperature + I(Temperature ^2) +year + month + Unemployment| cat_store, data = walmart, vcov = ~ cat_store)
+etable(model3)
+```
+  There are a few important choices in this model that allow us to isolate the causal effect of temperature on sales:
+
+1. Store Fixed Effects (cat_store): The store variable is a fixed effect and is meant to control for the variation between the stores. The fixed effect here controls for things we don't have any data for but still need to control for. By taking away the between variation we can focus solely on the variation within each store and get closer to answering our question.
+
+2. Seasonality and Time Trend Controls (month, year): The month variable controls for seasonality and the year variable controls for broader macroeconomic time trends.
+
+3.Economic Controls (Unemployment): This controls for local wealth and economic hardships that the regions of individual stores may experience over time.
+
+4. Polynomial Function Form (Temperature):  Theoretically, temperature should not affect sales in a linear fashion. Rather, sales should be lower when temperatures are very hot or very cold so the effect of temperature on price should take the form of a parabola (inverted U shape).
+
+
+```{r}
+## wald tests
+wald(model3, 'month')
+wald(model3, 'year')
+wald(model3, 'Unemployment')
+wald(model3, 'Temperature')
+```
+Note: Hypothesis tests for each variable group (Month, Year, Unemployment, and the joint Temperature variables) show that they are all statistically significant at the 1% level.
+    
+  
+## Interpretation of Results
+
+  Do higher temperatures causally affect sales? Yes, but the answer is non-linear. Let us interpret the coefficient on the polynomial of temperature to find how temperature affects sales. By Taking the derivative of the temperature coefficients and solving for X we get the answer 67.67, this is the peak- or the temperature when prices are highest. For each store, and controlling for month, year and unemployment rate, sales increase at a decreasing rate until about 68 degrees where they begin to decrease at an increasing rate. These results are in line with what I expected going in - sales are highest at moderate temperatures and lowest at extreme temperatures. Both temperature coefficients are statistically significant at the .1% level.
+    Because the temperature variable is a polynomial, the effect of a one unit increase in temperature is different at different temperatures. Let us look at a few specific examples to determine the effect of temperature on sales.
+    
+  80 degrees to 81:  According to the results here, this change would be associated with a .068% decrease in sales.
+    
+  90 to 91 degrees: This comes with a .12% decrease in sales for each store, almost double the change from 80 to 81. As you can see, the higher the temperature goes, the lower the sales.
+    
+  30 to 31 degrees: An expected increase in sales of .2%. 
+    
+  So, for the short term, we would expect sales to even out by increasing in the colder months of the year and decreasing in the hotter months. Based on our results, we don't have much cause for worry unless most days are well above our peak temperature of 68 degrees.
+    
+
+## Conclusion
+
+For these Wal-Mart stores, higher temperatures do have a causal effect on sales. But, especially in the short term, this effect is not harmful. Sales are highest when we have moderate temperatures, and lowest when temperatures are extreme. As temperature increases, we would expect sales to decrease in the warmer months and increase in the colder months. Over the course of a year, as temperatures increase, these results should even out and there should be little to no cumulative effect on sales from temperature.
+
+According to our results Wal-Mart does not have any real cause for concern regarding higher temperatures harmfully impacting sales.
